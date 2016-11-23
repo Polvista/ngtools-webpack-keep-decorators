@@ -19,6 +19,7 @@ function _removeDecorators(fileName, source) {
     var decorators = _findNodes(sourceFile, sourceFile, ts.SyntaxKind.Decorator);
     decorators.sort(function (a, b) { return b.pos - a.pos; });
     decorators.forEach(function (d) {
+        //this part of @ngtools/webpack is ignored
         //source = source.slice(0, d.pos) + source.slice(d.end);
     });
     return source;
