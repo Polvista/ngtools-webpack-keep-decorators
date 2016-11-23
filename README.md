@@ -5,6 +5,10 @@ Get it from npm:
 
 `npm install --save ngtools-webpack-keep-decorators`
 
+Change ngtools import:
+
+`const ngtools = require('@ngtools/webpack')` => `const ngtools = require('ngtools-webpack-keep-decorators')`
+
 And update your loader:
 
 `loaders: ['@ngtools/webpack']` => `loaders: ['ngtools-webpack-keep-decorators']`
