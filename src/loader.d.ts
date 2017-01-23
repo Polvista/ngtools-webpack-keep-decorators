@@ -1,1 +1,1 @@
-export declare function ngcLoader(source: string): string;
+export declare function ngcLoader(source: string): void;

@@ -2,44 +2,35 @@
 var fs = require('fs');
 var path_1 = require('path');
 var ts = require('typescript');
-function _createSource(path) {
-    return ts.createSourceFile(path, fs.readFileSync(path, 'utf-8'), ts.ScriptTarget.Latest);
-}
-function _findNodes(sourceFile, node, kind, keepGoing) {
-    if (keepGoing === void 0) { keepGoing = false; }
-    if (node.kind == kind && !keepGoing) {
-        return [node];
-    }
-    return node.getChildren(sourceFile).reduce(function (result, n) {
-        return result.concat(_findNodes(sourceFile, n, kind, keepGoing));
-    }, node.kind == kind ? [node] : []);
-}
-function _recursiveSymbolExportLookup(sourcePath, sourceFile, symbolName) {
+var refactor_1 = require('./refactor');
+function _recursiveSymbolExportLookup(refactor, symbolName, host, program) {
     // Check this file.
-    var hasSymbol = _findNodes(sourceFile, sourceFile, ts.SyntaxKind.ClassDeclaration)
+    var hasSymbol = refactor.findAstNodes(null, ts.SyntaxKind.ClassDeclaration)
         .some(function (cd) {
         return cd.name && cd.name.text == symbolName;
     });
     if (hasSymbol) {
-        return sourcePath;
+        return refactor.fileName;
     }
     // We found the bootstrap variable, now we just need to get where it's imported.
-    var exports = _findNodes(sourceFile, sourceFile, ts.SyntaxKind.ExportDeclaration, false)
+    var exports = refactor.findAstNodes(null, ts.SyntaxKind.ExportDeclaration)
         .map(function (node) { return node; });
     for (var _i = 0, exports_1 = exports; _i < exports_1.length; _i++) {
         var decl = exports_1[_i];
         if (!decl.moduleSpecifier || decl.moduleSpecifier.kind !== ts.SyntaxKind.StringLiteral) {
             continue;
         }
-        var module_1 = path_1.resolve(path_1.dirname(sourcePath), decl.moduleSpecifier.text);
+        var modulePath = decl.moduleSpecifier.text;
+        var resolvedModule = ts.resolveModuleName(modulePath, refactor.fileName, program.getCompilerOptions(), host);
+        if (!resolvedModule.resolvedModule || !resolvedModule.resolvedModule.resolvedFileName) {
+            return null;
+        }
+        var module_1 = resolvedModule.resolvedModule.resolvedFileName;
         if (!decl.exportClause) {
-            var moduleTs = module_1 + '.ts';
-            if (fs.existsSync(moduleTs)) {
-                var moduleSource = _createSource(moduleTs);
-                var maybeModule = _recursiveSymbolExportLookup(module_1, moduleSource, symbolName);
-                if (maybeModule) {
-                    return maybeModule;
-                }
+            var moduleRefactor = new refactor_1.TypeScriptFileRefactor(module_1, host, program);
+            var maybeModule = _recursiveSymbolExportLookup(moduleRefactor, symbolName, host, program);
+            if (maybeModule) {
+                return maybeModule;
             }
             continue;
         }
@@ -51,32 +42,30 @@ function _recursiveSymbolExportLookup(sourcePath, sourceFile, symbolName) {
                 if (fs.statSync(module_1).isDirectory()) {
                     var indexModule = path_1.join(module_1, 'index.ts');
                     if (fs.existsSync(indexModule)) {
-                        var maybeModule = _recursiveSymbolExportLookup(indexModule, _createSource(indexModule), symbolName);
+                        var indexRefactor = new refactor_1.TypeScriptFileRefactor(indexModule, host, program);
+                        var maybeModule = _recursiveSymbolExportLookup(indexRefactor, symbolName, host, program);
                         if (maybeModule) {
                             return maybeModule;
                         }
                     }
                 }
                 // Create the source and verify that the symbol is at least a class.
-                var source = _createSource(module_1);
-                var hasSymbol_1 = _findNodes(source, source, ts.SyntaxKind.ClassDeclaration)
+                var source = new refactor_1.TypeScriptFileRefactor(module_1, host, program);
+                var hasSymbol_1 = source.findAstNodes(null, ts.SyntaxKind.ClassDeclaration)
                     .some(function (cd) {
                     return cd.name && cd.name.text == symbolName;
                 });
                 if (hasSymbol_1) {
                     return module_1;
                 }
-                else {
-                    return null;
-                }
             }
         }
     }
     return null;
 }
-function _symbolImportLookup(sourcePath, sourceFile, symbolName) {
+function _symbolImportLookup(refactor, symbolName, host, program) {
     // We found the bootstrap variable, now we just need to get where it's imported.
-    var imports = _findNodes(sourceFile, sourceFile, ts.SyntaxKind.ImportDeclaration, false)
+    var imports = refactor.findAstNodes(null, ts.SyntaxKind.ImportDeclaration)
         .map(function (node) { return node; });
     for (var _i = 0, imports_1 = imports; _i < imports_1.length; _i++) {
         var decl = imports_1[_i];
@@ -86,7 +75,11 @@ function _symbolImportLookup(sourcePath, sourceFile, symbolName) {
         if (decl.moduleSpecifier.kind !== ts.SyntaxKind.StringLiteral) {
             continue;
         }
-        var module_2 = path_1.resolve(path_1.dirname(sourcePath), decl.moduleSpecifier.text);
+        var resolvedModule = ts.resolveModuleName(decl.moduleSpecifier.text, refactor.fileName, program.getCompilerOptions(), host);
+        if (!resolvedModule.resolvedModule || !resolvedModule.resolvedModule.resolvedFileName) {
+            return null;
+        }
+        var module_2 = resolvedModule.resolvedModule.resolvedFileName;
         if (decl.importClause.namedBindings.kind == ts.SyntaxKind.NamespaceImport) {
             var binding = decl.importClause.namedBindings;
             if (binding.name.text == symbolName) {
@@ -99,27 +92,11 @@ function _symbolImportLookup(sourcePath, sourceFile, symbolName) {
             for (var _a = 0, _b = binding.elements; _a < _b.length; _a++) {
                 var specifier = _b[_a];
                 if (specifier.name.text == symbolName) {
-                    // If it's a directory, load its index and recursively lookup.
-                    if (fs.statSync(module_2).isDirectory()) {
-                        var indexModule = path_1.join(module_2, 'index.ts');
-                        if (fs.existsSync(indexModule)) {
-                            var maybeModule = _recursiveSymbolExportLookup(indexModule, _createSource(indexModule), symbolName);
-                            if (maybeModule) {
-                                return maybeModule;
-                            }
-                        }
-                    }
-                    // Create the source and verify that the symbol is at least a class.
-                    var source = _createSource(module_2);
-                    var hasSymbol = _findNodes(source, source, ts.SyntaxKind.ClassDeclaration)
-                        .some(function (cd) {
-                        return cd.name && cd.name.text == symbolName;
-                    });
-                    if (hasSymbol) {
-                        return module_2;
-                    }
-                    else {
-                        return null;
+                    // Create the source and recursively lookup the import.
+                    var source = new refactor_1.TypeScriptFileRefactor(module_2, host, program);
+                    var maybeModule = _recursiveSymbolExportLookup(source, symbolName, host, program);
+                    if (maybeModule) {
+                        return maybeModule;
                     }
                 }
             }
@@ -127,9 +104,9 @@ function _symbolImportLookup(sourcePath, sourceFile, symbolName) {
     }
     return null;
 }
-function resolveEntryModuleFromMain(mainPath) {
-    var source = _createSource(mainPath);
-    var bootstrap = _findNodes(source, source, ts.SyntaxKind.CallExpression, false)
+function resolveEntryModuleFromMain(mainPath, host, program) {
+    var source = new refactor_1.TypeScriptFileRefactor(mainPath, host, program);
+    var bootstrap = source.findAstNodes(source.sourceFile, ts.SyntaxKind.CallExpression, false)
         .map(function (node) { return node; })
         .filter(function (call) {
         var access = call.expression;
@@ -137,17 +114,18 @@ function resolveEntryModuleFromMain(mainPath) {
             && access.name.kind == ts.SyntaxKind.Identifier
             && (access.name.text == 'bootstrapModule'
                 || access.name.text == 'bootstrapModuleFactory');
-    });
-    if (bootstrap.length != 1
-        || bootstrap[0].arguments[0].kind !== ts.SyntaxKind.Identifier) {
+    })
+        .map(function (node) { return node.arguments[0]; })
+        .filter(function (node) { return node.kind == ts.SyntaxKind.Identifier; });
+    if (bootstrap.length != 1) {
         throw new Error('Tried to find bootstrap code, but could not. Specify either '
             + 'statically analyzable bootstrap code or pass in an entryModule '
             + 'to the plugins options.');
     }
-    var bootstrapSymbolName = bootstrap[0].arguments[0].text;
-    var module = _symbolImportLookup(mainPath, source, bootstrapSymbolName);
+    var bootstrapSymbolName = bootstrap[0].text;
+    var module = _symbolImportLookup(source, bootstrapSymbolName, host, program);
     if (module) {
-        return path_1.resolve(path_1.dirname(mainPath), module) + "#" + bootstrapSymbolName;
+        return module.replace(/\.ts$/, '') + "#" + bootstrapSymbolName;
     }
     // shrug... something bad happened and we couldn't find the import statement.
     throw new Error('Tried to find bootstrap code, but could not. Specify either '

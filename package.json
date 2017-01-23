@@ -1,6 +1,6 @@
 {
   "name": "ngtools-webpack-keep-decorators",
-  "version": "1.1.7",
+  "version": "1.1.9",
   "description": "temporary @ngtools/webpack package that doesn't remove decorators",
   "main": "./src/index.js",
   "scripts": {
@@ -22,11 +22,13 @@
   },
   "homepage": "https://github.com/Polvista/ngtools-webpack-keep-decorators#readme",
   "dependencies": {
-    "@angular-cli/ast-tools": "^1.0.0"
+    "@angular-cli/ast-tools": "^1.0.0",
+    "magic-string": "^0.16.0",
+    "source-map": "^0.5.6"
   },
   "peerDependencies": {
-    "@angular/compiler-cli": "^2.1.0",
-    "@angular/core": "^2.0.0",
+    "@angular/compiler-cli": "2.2.3",
+    "@angular/core": "2.2.3",
     "reflect-metadata": "^0.1.8",
     "typescript": "^2.0.2"
   },

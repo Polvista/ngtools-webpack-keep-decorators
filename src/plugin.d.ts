@@ -1,5 +1,6 @@
 import * as ts from 'typescript';
 import { WebpackCompilerHost } from './compiler_host';
+import { Tapable } from './webpack';
 /**
  * Option Constants
  */
@@ -9,11 +10,12 @@ export interface AotPluginOptions {
     entryModule?: string;
     mainPath?: string;
     typeChecking?: boolean;
+    skipCodeGeneration?: boolean;
 }
 export interface LazyRoute {
     moduleRoute: ModuleRoute;
-    moduleRelativePath: string;
-    moduleAbsolutePath: string;
+    absolutePath: string;
+    absoluteGenDirPath: string;
 }
 export interface LazyRouteMap {
     [path: string]: LazyRoute;
@@ -25,7 +27,7 @@ export declare class ModuleRoute {
     toString(): string;
     static fromString(entry: string): ModuleRoute;
 }
-export declare class AotPlugin {
+export declare class AotPlugin implements Tapable {
     private _entryModule;
     private _compilerOptions;
     private _angularCompilerOptions;
@@ -36,10 +38,12 @@ export declare class AotPlugin {
     private _compilerHost;
     private _resourceLoader;
     private _lazyRoutes;
+    private _tsConfigPath;
     private _donePromise;
     private _compiler;
     private _compilation;
     private _typeCheck;
+    private _skipCodeGeneration;
     private _basePath;
     private _genDir;
     constructor(options: AotPluginOptions);
@@ -51,6 +55,7 @@ export declare class AotPlugin {
     readonly entryModule: ModuleRoute;
     readonly genDir: string;
     readonly program: ts.Program;
+    readonly skipCodeGeneration: boolean;
     readonly typeCheck: boolean;
     private _setupOptions(options);
     apply(compiler: any): void;

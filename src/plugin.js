@@ -11,6 +11,7 @@ var utils_1 = require('./utils');
 var compiler_host_1 = require('./compiler_host');
 var entry_resolver_1 = require('./entry_resolver');
 var compiler_cli_1 = require('@angular/compiler-cli');
+var paths_plugin_1 = require('./paths-plugin');
 var ModuleRoute = (function () {
     function ModuleRoute(path, className) {
         if (className === void 0) { className = null; }
@@ -32,6 +33,7 @@ var AotPlugin = (function () {
         this._compiler = null;
         this._compilation = null;
         this._typeCheck = true;
+        this._skipCodeGeneration = false;
         this._setupOptions(options);
     }
     Object.defineProperty(AotPlugin.prototype, "basePath", {
@@ -74,6 +76,11 @@ var AotPlugin = (function () {
         enumerable: true,
         configurable: true
     });
+    Object.defineProperty(AotPlugin.prototype, "skipCodeGeneration", {
+        get: function () { return this._skipCodeGeneration; },
+        enumerable: true,
+        configurable: true
+    });
     Object.defineProperty(AotPlugin.prototype, "typeCheck", {
         get: function () { return this._typeCheck; },
         enumerable: true,
@@ -84,15 +91,17 @@ var AotPlugin = (function () {
         if (!options.hasOwnProperty('tsConfigPath')) {
             throw new Error('Must specify "tsConfigPath" in the configuration of @ngtools/webpack.');
         }
+        this._tsConfigPath = options.tsConfigPath;
         // Check the base path.
-        var basePath = path.resolve(process.cwd(), path.dirname(options.tsConfigPath));
-        if (fs.statSync(options.tsConfigPath).isDirectory()) {
-            basePath = options.tsConfigPath;
+        var maybeBasePath = path.resolve(process.cwd(), this._tsConfigPath);
+        var basePath = maybeBasePath;
+        if (fs.statSync(maybeBasePath).isFile()) {
+            basePath = path.dirname(basePath);
         }
         if (options.hasOwnProperty('basePath')) {
-            basePath = options.basePath;
+            basePath = path.resolve(process.cwd(), options.basePath);
         }
-        var tsConfig = tsc_1.tsc.readConfiguration(options.tsConfigPath, basePath);
+        var tsConfig = tsc_1.tsc.readConfiguration(this._tsConfigPath, basePath);
         this._rootFilePath = tsConfig.parsed.fileNames
             .filter(function (fileName) { return !/\.spec\.ts$/.test(fileName); });
         // Check the genDir.
@@ -101,29 +110,29 @@ var AotPlugin = (function () {
             genDir = tsConfig.ngOptions.genDir;
         }
         this._compilerOptions = tsConfig.parsed.options;
-        if (options.entryModule) {
-            this._entryModule = ModuleRoute.fromString(options.entryModule);
-        }
-        else {
-            if (options.mainPath) {
-                this._entryModule = ModuleRoute.fromString(entry_resolver_1.resolveEntryModuleFromMain(options.mainPath));
-            }
-            else {
-                this._entryModule = ModuleRoute.fromString(tsConfig.ngOptions.entryModule);
-            }
-        }
-        this._angularCompilerOptions = Object.assign({}, tsConfig.ngOptions, {
-            basePath: basePath,
-            entryModule: this._entryModule.toString(),
-            genDir: genDir
-        });
+        this._angularCompilerOptions = Object.assign({}, tsConfig.ngOptions, { basePath: basePath, genDir: genDir });
         this._basePath = basePath;
         this._genDir = genDir;
         if (options.hasOwnProperty('typeChecking')) {
             this._typeCheck = options.typeChecking;
         }
-        this._compilerHost = new compiler_host_1.WebpackCompilerHost(this._compilerOptions);
+        if (options.hasOwnProperty('skipCodeGeneration')) {
+            this._skipCodeGeneration = options.skipCodeGeneration;
+        }
+        this._compilerHost = new compiler_host_1.WebpackCompilerHost(this._compilerOptions, this._basePath);
         this._program = ts.createProgram(this._rootFilePath, this._compilerOptions, this._compilerHost);
+        if (options.entryModule) {
+            this._entryModule = ModuleRoute.fromString(options.entryModule);
+        }
+        else {
+            if (options.mainPath) {
+                var entryModuleString = entry_resolver_1.resolveEntryModuleFromMain(options.mainPath, this._compilerHost, this._program);
+                this._entryModule = ModuleRoute.fromString(entryModuleString);
+            }
+            else {
+                this._entryModule = ModuleRoute.fromString(tsConfig.ngOptions.entryModule);
+            }
+        }
         this._reflectorHost = new ngCompiler.ReflectorHost(this._program, this._compilerHost, this._angularCompilerOptions);
         this._reflector = new ngCompiler.StaticReflector(this._reflectorHost);
     };
@@ -136,7 +145,7 @@ var AotPlugin = (function () {
                 if (!request) {
                     return callback();
                 }
-                request.request = _this.genDir;
+                request.request = _this.skipCodeGeneration ? _this.basePath : _this.genDir;
                 request.recursive = true;
                 request.dependencies.forEach(function (d) { return d.critical = false; });
                 return callback(null, request);
@@ -146,12 +155,12 @@ var AotPlugin = (function () {
                     return callback();
                 }
                 _this.done.then(function () {
-                    result.resource = _this.genDir;
+                    result.resource = _this.skipCodeGeneration ? _this.basePath : _this.genDir;
                     result.recursive = true;
                     result.dependencies.forEach(function (d) { return d.critical = false; });
                     result.resolveDependencies = utils_1.createResolveDependenciesFromContextMap(function (_, cb) { return cb(null, _this._lazyRoutes); });
                     return callback(null, result);
-                });
+                }).catch(function (err) { return callback(err); });
             });
         });
         compiler.plugin('make', function (compilation, cb) { return _this._make(compilation, cb); });
@@ -170,6 +179,11 @@ var AotPlugin = (function () {
                 cb();
             }
         });
+        compiler.resolvers.normal.apply(new paths_plugin_1.PathsPlugin({
+            tsConfigPath: this._tsConfigPath,
+            compilerOptions: this._compilerOptions,
+            compilerHost: this._compilerHost
+        }));
     };
     AotPlugin.prototype._make = function (compilation, cb) {
         var _this = this;
@@ -185,16 +199,27 @@ var AotPlugin = (function () {
             locale: undefined,
             basePath: this.basePath
         };
-        // Create the Code Generator.
-        var codeGenerator = ngCompiler.CodeGenerator.create(this._angularCompilerOptions, i18nOptions, this._program, this._compilerHost, new ngCompiler.NodeReflectorHostContext(this._compilerHost), this._resourceLoader);
-        // We need to temporarily patch the CodeGenerator until either it's patched or allows us
-        // to pass in our own ReflectorHost.
-        reflector_host_1.patchReflectorHost(codeGenerator);
-        this._donePromise = codeGenerator.codegen({ transitiveModules: true })
+        var promise = Promise.resolve();
+        if (!this._skipCodeGeneration) {
+            // Create the Code Generator.
+            var codeGenerator_1 = ngCompiler.CodeGenerator.create(this._angularCompilerOptions, i18nOptions, this._program, this._compilerHost, new ngCompiler.NodeReflectorHostContext(this._compilerHost), this._resourceLoader);
+            // We need to temporarily patch the CodeGenerator until either it's patched or allows us
+            // to pass in our own ReflectorHost.
+            // TODO: remove this.
+            reflector_host_1.patchReflectorHost(codeGenerator_1);
+            promise = promise.then(function () { return codeGenerator_1.codegen({
+                transitiveModules: true
+            }); });
+        }
+        this._donePromise = promise
             .then(function () {
             // Create a new Program, based on the old one. This will trigger a resolution of all
             // transitive modules, which include files that might just have been generated.
+            // This needs to happen after the code generator has been created for generated files
+            // to be properly resolved.
             _this._program = ts.createProgram(_this._rootFilePath, _this._compilerOptions, _this._compilerHost, _this._program);
+        })
+            .then(function () {
             var diagnostics = _this._program.getGlobalDiagnostics();
             if (diagnostics.length > 0) {
                 var message = diagnostics
@@ -218,7 +243,12 @@ var AotPlugin = (function () {
             Object.keys(allLazyRoutes)
                 .forEach(function (k) {
                 var lazyRoute = allLazyRoutes[k];
-                _this._lazyRoutes[k + '.ngfactory'] = lazyRoute.moduleAbsolutePath + '.ngfactory.ts';
+                if (_this.skipCodeGeneration) {
+                    _this._lazyRoutes[k] = lazyRoute.absolutePath + '.ts';
+                }
+                else {
+                    _this._lazyRoutes[k + '.ngfactory'] = lazyRoute.absoluteGenDirPath + '.ngfactory.ts';
+                }
             });
         })
             .then(function () { return cb(); }, function (err) { cb(err); });
@@ -241,20 +271,25 @@ var AotPlugin = (function () {
         var entryNgModuleMetadata = this.getNgModuleMetadata(staticSymbol);
         var loadChildrenRoute = this.extractLoadChildren(entryNgModuleMetadata)
             .map(function (route) {
-            var mr = ModuleRoute.fromString(route);
-            var relativePath = _this._resolveModulePath(mr, relativeModulePath);
-            var absolutePath = path.resolve(_this.genDir, relativePath);
+            var moduleRoute = ModuleRoute.fromString(route);
+            var resolvedModule = ts.resolveModuleName(moduleRoute.path, relativeModulePath, _this._compilerOptions, _this._compilerHost);
+            if (!resolvedModule.resolvedModule) {
+                throw new Error("Could not resolve route \"" + route + "\" from file \"" + relativeModulePath + "\".");
+            }
+            var relativePath = path.relative(_this.basePath, resolvedModule.resolvedModule.resolvedFileName).replace(/\.ts$/, '');
+            var absolutePath = path.join(_this.basePath, relativePath);
+            var absoluteGenDirPath = path.join(_this._genDir, relativePath);
             return {
-                moduleRoute: mr,
-                moduleRelativePath: relativePath,
-                moduleAbsolutePath: absolutePath
+                moduleRoute: moduleRoute,
+                absoluteGenDirPath: absoluteGenDirPath,
+                absolutePath: absolutePath
             };
         });
         var resultMap = loadChildrenRoute
             .reduce(function (acc, curr) {
             var key = curr.moduleRoute.path;
             if (acc[key]) {
-                if (acc[key].moduleAbsolutePath != curr.moduleAbsolutePath) {
+                if (acc[key].absolutePath != curr.absolutePath) {
                     throw new Error(("Duplicated path in loadChildren detected: \"" + key + "\" is used in 2 ") +
                         'loadChildren, but they point to different modules. Webpack cannot distinguish ' +
                         'between the two based on context and would fail to load the proper one.');
@@ -273,7 +308,7 @@ var AotPlugin = (function () {
                 var child = children[p];
                 var key = child.moduleRoute.path;
                 if (resultMap[key]) {
-                    if (resultMap[key].moduleAbsolutePath != child.moduleAbsolutePath) {
+                    if (resultMap[key].absolutePath != child.absolutePath) {
                         throw new Error(("Duplicated path in loadChildren detected: \"" + key + "\" is used in 2 ") +
                             'loadChildren, but they point to different modules. Webpack cannot distinguish ' +
                             'between the two based on context and would fail to load the proper one.');

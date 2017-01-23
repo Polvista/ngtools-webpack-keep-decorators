@@ -53,12 +53,15 @@ export declare class VirtualFileStats extends VirtualStats {
 }
 export declare class WebpackCompilerHost implements ts.CompilerHost {
     private _options;
-    private _setParentNodes;
     private _delegate;
     private _files;
     private _directories;
     private _changed;
-    constructor(_options: ts.CompilerOptions, _setParentNodes?: boolean);
+    private _basePath;
+    private _setParentNodes;
+    constructor(_options: ts.CompilerOptions, basePath: string);
+    private _normalizePath(path);
+    private _resolve(path);
     private _setFileContent(fileName, content);
     populateWebpackResolver(resolver: any): void;
     fileExists(fileName: string): boolean;
@@ -69,7 +72,7 @@ export declare class WebpackCompilerHost implements ts.CompilerHost {
     getSourceFile(fileName: string, languageVersion: ts.ScriptTarget, onError?: OnErrorFn): ts.SourceFile;
     getCancellationToken(): ts.CancellationToken;
     getDefaultLibFileName(options: ts.CompilerOptions): string;
-    writeFile(fileName: string, data: string, writeByteOrderMark: boolean, onError?: OnErrorFn): void;
+    readonly writeFile: (fileName: string, data: string, writeByteOrderMark: boolean, onError?: (message: string) => void, sourceFiles?: ts.SourceFile[]) => void;
     getCurrentDirectory(): string;
     getCanonicalFileName(fileName: string): string;
     useCaseSensitiveFileNames(): boolean;
