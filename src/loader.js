@@ -17,10 +17,10 @@ function _getContentOfKeyLiteral(source, node) {
 }
 function _removeDecorators(refactor) {
     // Find all decorators.
-    refactor.findAstNodes(refactor.sourceFile, ts.SyntaxKind.Decorator)
+    /*refactor.findAstNodes(refactor.sourceFile, ts.SyntaxKind.Decorator)
         .forEach(function (d) {
             //return refactor.removeNode(d);
-        });
+        });*/
 }
 function _replaceBootstrap(plugin, refactor) {
     // If bootstrapModule can't be found, bail out early.
