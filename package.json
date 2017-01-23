@@ -1,6 +1,6 @@
 {
   "name": "ngtools-webpack-keep-decorators",
-  "version": "1.1.9",
+  "version": "1.1.10",
   "description": "temporary @ngtools/webpack package that doesn't remove decorators",
   "main": "./src/index.js",
   "scripts": {
